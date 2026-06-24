@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import SwiftData
 import XCTest
 
@@ -3274,6 +3275,42 @@ final class MatchEngineTests: XCTestCase {
         XCTAssertEqual(storedSettings.defaultSubstitutionLimit, 5)
     }
 
+    func testPersistenceRecoveryImportsLegacySQLiteStore() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("midline-legacy-\(UUID().uuidString).store")
+        try createLegacySQLiteStore(at: storeURL)
+        defer {
+            try? FileManager.default.removeItem(at: storeURL)
+            try? FileManager.default.removeItem(at: URL(fileURLWithPath: storeURL.path + "-shm"))
+            try? FileManager.default.removeItem(at: URL(fileURLWithPath: storeURL.path + "-wal"))
+            let recoveredURL = storeURL.deletingLastPathComponent().appendingPathComponent("MidlineRecovered.store")
+            try? FileManager.default.removeItem(at: recoveredURL)
+            try? FileManager.default.removeItem(at: URL(fileURLWithPath: recoveredURL.path + "-shm"))
+            try? FileManager.default.removeItem(at: URL(fileURLWithPath: recoveredURL.path + "-wal"))
+        }
+
+        let recoveredContainer = try XCTUnwrap(PersistenceController.recoverStoreForTesting(sourceURL: storeURL))
+        let context = ModelContext(recoveredContainer)
+
+        let matches = try context.fetch(FetchDescriptor<MatchRecord>())
+        let match = try XCTUnwrap(matches.first)
+        XCTAssertEqual(match.displayTitle, "Legacy Final")
+        XCTAssertEqual(match.displayTeamName, "Legacy FC")
+        XCTAssertEqual(match.displayOpponentName, "Old Rivals")
+        XCTAssertEqual(match.homeScore, 2)
+        XCTAssertEqual(match.awayScore, 1)
+        XCTAssertEqual(match.trackedEventTypes, MatchEventType.defaultQuickActions)
+        XCTAssertEqual(match.events.count, 1)
+
+        let event = try XCTUnwrap(match.events.first)
+        XCTAssertEqual(event.eventType, .goal)
+        XCTAssertEqual(event.sourceDevice, .iPhone)
+
+        let settings = try XCTUnwrap(context.fetch(FetchDescriptor<AppSettingsRecord>()).first)
+        XCTAssertEqual(settings.defaultDurationMinutes, 80)
+        XCTAssertEqual(settings.defaultNumberOfHalves, 2)
+    }
+
     func testThemeAccentTitlesUseReadableWords() {
         XCTAssertEqual(AppThemeAccent.stadiumGreen.title, "Stadium Green")
         XCTAssertEqual(AppThemeAccent.matchBlue.title, "Match Blue")
@@ -6355,6 +6392,106 @@ final class MatchEngineTests: XCTestCase {
         return ModelContext(container)
     }
 
+    private func createLegacySQLiteStore(at url: URL) throws {
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+
+        let matchID = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
+        let eventID = UUID(uuidString: "10000000-0000-0000-0000-000000000002")!
+        let settingsID = UUID(uuidString: "10000000-0000-0000-0000-000000000003")!
+        let date = Date(timeIntervalSince1970: 1_800_000_000).timeIntervalSinceReferenceDate
+
+        try exec("""
+        CREATE TABLE ZMATCHRECORD (
+            Z_PK INTEGER PRIMARY KEY,
+            Z_ENT INTEGER,
+            Z_OPT INTEGER,
+            ZAWAYSCORE INTEGER,
+            ZCURRENTHALF INTEGER,
+            ZDURATIONMINUTES INTEGER,
+            ZELAPSEDSECONDS INTEGER,
+            ZHOMESCORE INTEGER,
+            ZISFINISHED INTEGER,
+            ZISLIVE INTEGER,
+            ZISQUICKMATCH INTEGER,
+            ZNUMBEROFHALVES INTEGER,
+            ZDATE TIMESTAMP,
+            ZACCENTRAWVALUE VARCHAR,
+            ZOPPONENTNAME VARCHAR,
+            ZTEAMNAME VARCHAR,
+            ZTITLE VARCHAR,
+            ZID BLOB
+        );
+        INSERT INTO ZMATCHRECORD (
+            Z_PK, Z_ENT, Z_OPT, ZAWAYSCORE, ZCURRENTHALF, ZDURATIONMINUTES, ZELAPSEDSECONDS,
+            ZHOMESCORE, ZISFINISHED, ZISLIVE, ZISQUICKMATCH, ZNUMBEROFHALVES, ZDATE,
+            ZACCENTRAWVALUE, ZOPPONENTNAME, ZTEAMNAME, ZTITLE, ZID
+        ) VALUES (
+            1, 1, 1, 1, 2, 80, 4800, 2, 0, 1, 0, 2, \(date),
+            'stadiumGreen', 'Old Rivals', 'Legacy FC', 'Legacy Final', X'\(matchID.sqliteHex)'
+        );
+
+        CREATE TABLE ZMATCHEVENTRECORD (
+            Z_PK INTEGER PRIMARY KEY,
+            Z_ENT INTEGER,
+            Z_OPT INTEGER,
+            ZMATCHMINUTE INTEGER,
+            ZMATCH INTEGER,
+            ZPITCHX FLOAT,
+            ZPITCHY FLOAT,
+            ZTIMESTAMP TIMESTAMP,
+            ZEVENTTYPERAWVALUE VARCHAR,
+            ZNOTES VARCHAR,
+            ZPERIODRAWVALUE VARCHAR,
+            ZTEAMSIDERAWVALUE VARCHAR,
+            ZID BLOB,
+            ZLINKEDGROUPID BLOB,
+            ZPLAYERID BLOB,
+            ZSECONDARYPLAYERID BLOB
+        );
+        INSERT INTO ZMATCHEVENTRECORD (
+            Z_PK, Z_ENT, Z_OPT, ZMATCHMINUTE, ZMATCH, ZTIMESTAMP,
+            ZEVENTTYPERAWVALUE, ZPERIODRAWVALUE, ZTEAMSIDERAWVALUE, ZID
+        ) VALUES (
+            1, 2, 1, 42, 1, \(date), 'goal', 'secondHalf', 'home', X'\(eventID.sqliteHex)'
+        );
+
+        CREATE TABLE ZAPPSETTINGSRECORD (
+            Z_PK INTEGER PRIMARY KEY,
+            Z_ENT INTEGER,
+            Z_OPT INTEGER,
+            ZDEFAULTDURATIONMINUTES INTEGER,
+            ZDEFAULTNUMBEROFHALVES INTEGER,
+            ZTHEMEACCENTRAWVALUE VARCHAR,
+            ZID BLOB,
+            ZQUICKACTIONSDATA BLOB
+        );
+        INSERT INTO ZAPPSETTINGSRECORD (
+            Z_PK, Z_ENT, Z_OPT, ZDEFAULTDURATIONMINUTES, ZDEFAULTNUMBEROFHALVES,
+            ZTHEMEACCENTRAWVALUE, ZID, ZQUICKACTIONSDATA
+        ) VALUES (
+            1, 3, 1, 80, 2, 'matchBlue', X'\(settingsID.sqliteHex)', X''
+        );
+        """, db: db)
+    }
+
+    private func exec(_ sql: String, db: OpaquePointer?) throws {
+        var errorMessage: UnsafeMutablePointer<CChar>?
+        let result = sqlite3_exec(db, sql, nil, nil, &errorMessage)
+        if result != SQLITE_OK {
+            let message: String
+            if let errorMessage {
+                message = String(cString: errorMessage)
+            } else {
+                message = "Unknown SQLite error"
+            }
+            sqlite3_free(errorMessage)
+            XCTFail(message)
+            throw NSError(domain: "MidlineSQLiteTest", code: Int(result), userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
     private func makeMatch(trackedEventTypes: [MatchEventType] = MatchEventType.defaultQuickActions) -> MatchRecord {
         MatchRecord(
             title: "Midline FC vs Rivals FC",
@@ -6369,5 +6506,13 @@ final class MatchEngineTests: XCTestCase {
 private extension MatchAnalyticsSummary {
     func value(for title: String) -> Int? {
         teamTotals.first { $0.title == title }?.value
+    }
+}
+
+private extension UUID {
+    var sqliteHex: String {
+        withUnsafeBytes(of: uuid) { buffer in
+            buffer.map { String(format: "%02X", $0) }.joined()
+        }
     }
 }

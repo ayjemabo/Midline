@@ -24,6 +24,7 @@ struct MidlineiOSApp: App {
                     do {
                         try persistence.prepareRequiredRecords(context: context)
                         MatchSyncService.shared.configure(engine: engine, context: context)
+                        launchErrorMessage = persistence.launchIssueMessage
                     } catch {
                         launchErrorMessage = error.localizedDescription
                     }
