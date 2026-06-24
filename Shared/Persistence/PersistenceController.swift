@@ -22,7 +22,7 @@ final class PersistenceController {
         if !inMemory,
            let recovered = Self.openRecoveredStoreIfAvailable(schema: schema, primaryURL: primaryConfiguration.url, diagnostics: &diagnostics) {
             container = recovered
-            launchIssueMessage = "Midline opened a recovered data store after an earlier migration issue."
+            launchIssueMessage = nil
             return
         }
 

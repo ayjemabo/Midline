@@ -401,13 +401,42 @@ private struct PlayerDraftRow: View {
                 .buttonStyle(.borderless)
             }
 
-            HStack {
-                Picker("Position", selection: $player.position) {
+            HStack(spacing: 12) {
+                Menu {
                     ForEach(PlayerPosition.allCases) { position in
-                        Text(position.title).tag(position)
+                        Button {
+                            player.position = position
+                        } label: {
+                            if player.position == position {
+                                Label(position.title, systemImage: "checkmark")
+                            } else {
+                                Text(position.title)
+                            }
+                        }
                     }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(player.position.title)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(.quaternary)
+                    )
+                    .accessibilityElement(children: .ignore)
                 }
-                .labelsHidden()
+                .buttonStyle(.plain)
+                .accessibilityLabel("Position")
+                .accessibilityValue(player.position.title)
+
+                Spacer(minLength: 8)
 
                 Toggle("Starter", isOn: $player.isStarter)
                     .toggleStyle(.switch)
