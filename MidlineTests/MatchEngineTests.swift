@@ -3164,6 +3164,116 @@ final class MatchEngineTests: XCTestCase {
         XCTAssertEqual(settings.defaultExtraTimeHalfDurationMinuteValue, 1)
     }
 
+    func testMatchRecordMigrationNilFootballFieldsUseSafeDefaults() {
+        let match = makeMatch()
+        match.extraTimeEnabled = nil
+        match.extraTimeHalfDurationMinutes = nil
+        match.shootoutStatusRawValue = nil
+        match.homePenaltyScore = nil
+        match.awayPenaltyScore = nil
+        match.substitutionLimitModeRawValue = nil
+        match.substitutionLimit = nil
+        match.trackedEventTypeRawValues = nil
+
+        XCTAssertFalse(match.usesExtraTime)
+        XCTAssertEqual(match.totalPeriodNumber, 2)
+        XCTAssertEqual(match.extraTimeHalfDurationMinuteValue, 15)
+        XCTAssertEqual(match.shootoutStatus, .notStarted)
+        XCTAssertEqual(match.homePenaltyScoreValue, 0)
+        XCTAssertEqual(match.awayPenaltyScoreValue, 0)
+        XCTAssertTrue(match.substitutionsAreUnlimited)
+        XCTAssertEqual(match.substitutionLimitValue, 5)
+        XCTAssertEqual(match.trackedEventTypes, MatchEventType.defaultQuickActions)
+
+        match.normalizePersistedValues()
+
+        XCTAssertEqual(match.extraTimeEnabled, false)
+        XCTAssertEqual(match.extraTimeHalfDurationMinutes, 15)
+        XCTAssertEqual(match.shootoutStatusRawValue, PenaltyShootoutStatus.notStarted.rawValue)
+        XCTAssertEqual(match.homePenaltyScore, 0)
+        XCTAssertEqual(match.awayPenaltyScore, 0)
+        XCTAssertEqual(match.substitutionLimitModeRawValue, SubstitutionLimitMode.unlimited.rawValue)
+        XCTAssertEqual(match.substitutionLimit, 5)
+        XCTAssertEqual(match.trackedEventTypeRawValues, MatchEventType.defaultQuickActions.map(\.rawValue))
+    }
+
+    func testAppSettingsMigrationNilFootballDefaultsUseSafeDefaults() {
+        let settings = AppSettingsRecord()
+        settings.defaultExtraTimeEnabled = nil
+        settings.defaultExtraTimeHalfDurationMinutes = nil
+        settings.defaultSubstitutionLimitModeRawValue = nil
+        settings.defaultSubstitutionLimit = nil
+
+        XCTAssertFalse(settings.defaultUsesExtraTime)
+        XCTAssertEqual(settings.defaultTotalPeriodNumber, 2)
+        XCTAssertEqual(settings.defaultExtraTimeHalfDurationMinuteValue, 15)
+        XCTAssertEqual(settings.defaultSubstitutionLimitMode, .unlimited)
+        XCTAssertEqual(settings.defaultSubstitutionLimitValue, 5)
+
+        settings.normalizePersistedValues()
+
+        XCTAssertEqual(settings.defaultExtraTimeEnabled, false)
+        XCTAssertEqual(settings.defaultExtraTimeHalfDurationMinutes, 15)
+        XCTAssertEqual(settings.defaultSubstitutionLimitModeRawValue, SubstitutionLimitMode.unlimited.rawValue)
+        XCTAssertEqual(settings.defaultSubstitutionLimit, 5)
+    }
+
+    func testPrepareRequiredRecordsNormalizesMigrationNilFootballFields() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let context = persistence.container.mainContext
+        let match = makeMatch()
+        match.numberOfHalves = 4
+        match.extraTimeEnabled = nil
+        match.extraTimeHalfDurationMinutes = nil
+        match.shootoutStatusRawValue = nil
+        match.homePenaltyScore = nil
+        match.awayPenaltyScore = nil
+        match.substitutionLimitModeRawValue = nil
+        match.substitutionLimit = nil
+        match.trackedEventTypeRawValues = nil
+        let event = MatchEventRecord(
+            matchMinute: 12,
+            period: .firstHalf,
+            eventType: .shotOnTarget,
+            teamSide: .home,
+            match: match
+        )
+        event.sourceDeviceRawValue = nil
+        match.events.append(event)
+        let settings = AppSettingsRecord()
+        settings.defaultExtraTimeEnabled = nil
+        settings.defaultExtraTimeHalfDurationMinutes = nil
+        settings.defaultSubstitutionLimitModeRawValue = nil
+        settings.defaultSubstitutionLimit = nil
+        context.insert(match)
+        context.insert(event)
+        context.insert(settings)
+        try context.save()
+
+        try persistence.prepareRequiredRecords(context: context)
+
+        let storedMatch = try XCTUnwrap(context.fetch(FetchDescriptor<MatchRecord>()).first)
+        XCTAssertEqual(storedMatch.extraTimeEnabled, true)
+        XCTAssertEqual(storedMatch.numberOfHalves, 4)
+        XCTAssertEqual(storedMatch.extraTimeHalfDurationMinutes, 15)
+        XCTAssertEqual(storedMatch.shootoutStatusRawValue, PenaltyShootoutStatus.notStarted.rawValue)
+        XCTAssertEqual(storedMatch.homePenaltyScore, 0)
+        XCTAssertEqual(storedMatch.awayPenaltyScore, 0)
+        XCTAssertEqual(storedMatch.substitutionLimitModeRawValue, SubstitutionLimitMode.unlimited.rawValue)
+        XCTAssertEqual(storedMatch.substitutionLimit, 5)
+        XCTAssertEqual(storedMatch.trackedEventTypeRawValues, MatchEventType.defaultQuickActions.map(\.rawValue))
+        let storedEvent = try XCTUnwrap(storedMatch.events.first)
+        XCTAssertEqual(storedEvent.sourceDevice, .iPhone)
+        XCTAssertEqual(storedEvent.sourceDeviceRawValue, SourceDevice.iPhone.rawValue)
+        XCTAssertEqual(storedEvent.validSourceDevice, .iPhone)
+
+        let storedSettings = try XCTUnwrap(context.fetch(FetchDescriptor<AppSettingsRecord>()).first)
+        XCTAssertEqual(storedSettings.defaultExtraTimeEnabled, false)
+        XCTAssertEqual(storedSettings.defaultExtraTimeHalfDurationMinutes, 15)
+        XCTAssertEqual(storedSettings.defaultSubstitutionLimitModeRawValue, SubstitutionLimitMode.unlimited.rawValue)
+        XCTAssertEqual(storedSettings.defaultSubstitutionLimit, 5)
+    }
+
     func testThemeAccentTitlesUseReadableWords() {
         XCTAssertEqual(AppThemeAccent.stadiumGreen.title, "Stadium Green")
         XCTAssertEqual(AppThemeAccent.matchBlue.title, "Match Blue")

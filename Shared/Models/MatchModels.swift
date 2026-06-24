@@ -172,13 +172,13 @@ final class MatchRecord {
     var date: Date
     var durationMinutes: Int
     var numberOfHalves: Int
-    var extraTimeEnabled: Bool = false
-    var extraTimeHalfDurationMinutes: Int = MatchFormat.defaultExtraTimeHalfDurationMinutes
-    var shootoutStatusRawValue: String = PenaltyShootoutStatus.notStarted.rawValue
-    var homePenaltyScore: Int = 0
-    var awayPenaltyScore: Int = 0
-    var substitutionLimitModeRawValue: String = SubstitutionLimitMode.unlimited.rawValue
-    var substitutionLimit: Int = MatchFormat.defaultSubstitutionLimit
+    var extraTimeEnabled: Bool?
+    var extraTimeHalfDurationMinutes: Int?
+    var shootoutStatusRawValue: String?
+    var homePenaltyScore: Int?
+    var awayPenaltyScore: Int?
+    var substitutionLimitModeRawValue: String?
+    var substitutionLimit: Int?
     var isQuickMatch: Bool
     var currentHalf: Int
     var homeScore: Int
@@ -187,7 +187,7 @@ final class MatchRecord {
     var isLive: Bool
     var isFinished: Bool
     var accentRawValue: String
-    var trackedEventTypeRawValues: [String]
+    var trackedEventTypeRawValues: [String]?
     @Relationship(deleteRule: .cascade, inverse: \PlayerRecord.match) var players: [PlayerRecord] = []
     @Relationship(deleteRule: .cascade, inverse: \MatchEventRecord.match) var events: [MatchEventRecord] = []
 
@@ -253,18 +253,27 @@ final class MatchRecord {
 
     var trackedEventTypes: [MatchEventType] {
         get {
-            Self.trackedEventTypes(fromRawValues: trackedEventTypeRawValues)
+            guard let trackedEventTypeRawValues else {
+                return MatchEventType.defaultQuickActions
+            }
+            return Self.trackedEventTypes(fromRawValues: trackedEventTypeRawValues)
         }
         set { trackedEventTypeRawValues = Self.rawTrackedEventValues(from: newValue) }
     }
 
     var shootoutStatus: PenaltyShootoutStatus {
-        get { PenaltyShootoutStatus(rawValue: MatchFormat.sanitizedRawValue(shootoutStatusRawValue)) ?? .notStarted }
+        get {
+            guard let shootoutStatusRawValue else { return .notStarted }
+            return PenaltyShootoutStatus(rawValue: MatchFormat.sanitizedRawValue(shootoutStatusRawValue)) ?? .notStarted
+        }
         set { shootoutStatusRawValue = newValue.rawValue }
     }
 
     var substitutionLimitMode: SubstitutionLimitMode {
-        get { SubstitutionLimitMode(rawValue: MatchFormat.sanitizedRawValue(substitutionLimitModeRawValue)) ?? .unlimited }
+        get {
+            guard let substitutionLimitModeRawValue else { return .unlimited }
+            return SubstitutionLimitMode(rawValue: MatchFormat.sanitizedRawValue(substitutionLimitModeRawValue)) ?? .unlimited
+        }
         set { substitutionLimitModeRawValue = newValue.rawValue }
     }
 
@@ -312,11 +321,13 @@ final class MatchRecord {
     }
 
     var extraTimeHalfDurationMinuteValue: Int {
-        MatchFormat.clampedExtraTimeHalfDurationMinutes(extraTimeHalfDurationMinutes)
+        MatchFormat.clampedExtraTimeHalfDurationMinutes(
+            extraTimeHalfDurationMinutes ?? MatchFormat.defaultExtraTimeHalfDurationMinutes
+        )
     }
 
     var substitutionLimitValue: Int {
-        MatchFormat.clampedSubstitutionLimit(substitutionLimit)
+        MatchFormat.clampedSubstitutionLimit(substitutionLimit ?? MatchFormat.defaultSubstitutionLimit)
     }
 
     var substitutionsAreUnlimited: Bool {
@@ -328,7 +339,7 @@ final class MatchRecord {
     }
 
     var usesExtraTime: Bool {
-        extraTimeEnabled || MatchFormat.clampedNumberOfPeriods(numberOfHalves) > MatchFormat.regulationPeriodCount
+        (extraTimeEnabled ?? false) || MatchFormat.clampedNumberOfPeriods(numberOfHalves) > MatchFormat.regulationPeriodCount
     }
 
     var canStartExtraTimeFromRegulation: Bool {
@@ -374,11 +385,30 @@ final class MatchRecord {
     }
 
     var homePenaltyScoreValue: Int {
-        MatchFormat.clampedScore(homePenaltyScore)
+        MatchFormat.clampedScore(homePenaltyScore ?? 0)
     }
 
     var awayPenaltyScoreValue: Int {
-        MatchFormat.clampedScore(awayPenaltyScore)
+        MatchFormat.clampedScore(awayPenaltyScore ?? 0)
+    }
+
+    func normalizePersistedValues() {
+        durationMinutes = durationMinuteValue
+        extraTimeEnabled = usesExtraTime
+        numberOfHalves = totalPeriodNumber
+        extraTimeHalfDurationMinutes = extraTimeHalfDurationMinuteValue
+        shootoutStatusRawValue = shootoutStatus.rawValue
+        homePenaltyScore = homePenaltyScoreValue
+        awayPenaltyScore = awayPenaltyScoreValue
+        substitutionLimitModeRawValue = substitutionLimitMode.rawValue
+        substitutionLimit = substitutionLimitValue
+        currentHalf = currentPeriodNumber
+        homeScore = homeScoreValue
+        awayScore = awayScoreValue
+        elapsedSeconds = elapsedClockSeconds
+        isLive = isLive && !isFinished
+        accentRawValue = accent.rawValue
+        trackedEventTypes = trackedEventTypes
     }
 
     private static func rawTrackedEventValues(from eventTypes: [MatchEventType]) -> [String] {
@@ -693,7 +723,7 @@ final class MatchEventRecord {
     var notes: String?
     var pitchX: Double?
     var pitchY: Double?
-    var sourceDeviceRawValue: String
+    var sourceDeviceRawValue: String?
     var match: MatchRecord?
 
     init(
@@ -760,12 +790,16 @@ final class MatchEventRecord {
     }
 
     var sourceDevice: SourceDevice {
-        get { SourceDevice(rawValue: MatchFormat.sanitizedRawValue(sourceDeviceRawValue)) ?? .iPhone }
+        get {
+            guard let sourceDeviceRawValue else { return .iPhone }
+            return SourceDevice(rawValue: MatchFormat.sanitizedRawValue(sourceDeviceRawValue)) ?? .iPhone
+        }
         set { sourceDeviceRawValue = newValue.rawValue }
     }
 
     var validSourceDevice: SourceDevice? {
-        SourceDevice(rawValue: MatchFormat.sanitizedRawValue(sourceDeviceRawValue))
+        guard let sourceDeviceRawValue else { return nil }
+        return SourceDevice(rawValue: MatchFormat.sanitizedRawValue(sourceDeviceRawValue))
     }
 
     var matchMinuteValue: Int {
@@ -778,6 +812,10 @@ final class MatchEventRecord {
 
     var displayTitle: String {
         validEventType?.title ?? "Unknown Event"
+    }
+
+    func normalizePersistedValues() {
+        sourceDeviceRawValue = sourceDevice.rawValue
     }
 }
 
@@ -928,10 +966,10 @@ final class AppSettingsRecord {
     @Attribute(.unique) var id: UUID
     var defaultDurationMinutes: Int
     var defaultNumberOfHalves: Int
-    var defaultExtraTimeEnabled: Bool = false
-    var defaultExtraTimeHalfDurationMinutes: Int = MatchFormat.defaultExtraTimeHalfDurationMinutes
-    var defaultSubstitutionLimitModeRawValue: String = SubstitutionLimitMode.unlimited.rawValue
-    var defaultSubstitutionLimit: Int = MatchFormat.defaultSubstitutionLimit
+    var defaultExtraTimeEnabled: Bool?
+    var defaultExtraTimeHalfDurationMinutes: Int?
+    var defaultSubstitutionLimitModeRawValue: String?
+    var defaultSubstitutionLimit: Int?
     var themeAccentRawValue: String
     var quickActionsData: Data
 
@@ -972,7 +1010,7 @@ final class AppSettingsRecord {
     }
 
     var defaultUsesExtraTime: Bool {
-        defaultExtraTimeEnabled || defaultNumberOfHalvesValue > MatchFormat.regulationPeriodCount
+        (defaultExtraTimeEnabled ?? false) || defaultNumberOfHalvesValue > MatchFormat.regulationPeriodCount
     }
 
     var defaultTotalPeriodNumber: Int {
@@ -983,16 +1021,21 @@ final class AppSettingsRecord {
     }
 
     var defaultExtraTimeHalfDurationMinuteValue: Int {
-        MatchFormat.clampedExtraTimeHalfDurationMinutes(defaultExtraTimeHalfDurationMinutes)
+        MatchFormat.clampedExtraTimeHalfDurationMinutes(
+            defaultExtraTimeHalfDurationMinutes ?? MatchFormat.defaultExtraTimeHalfDurationMinutes
+        )
     }
 
     var defaultSubstitutionLimitMode: SubstitutionLimitMode {
-        get { SubstitutionLimitMode(rawValue: MatchFormat.sanitizedRawValue(defaultSubstitutionLimitModeRawValue)) ?? .unlimited }
+        get {
+            guard let defaultSubstitutionLimitModeRawValue else { return .unlimited }
+            return SubstitutionLimitMode(rawValue: MatchFormat.sanitizedRawValue(defaultSubstitutionLimitModeRawValue)) ?? .unlimited
+        }
         set { defaultSubstitutionLimitModeRawValue = newValue.rawValue }
     }
 
     var defaultSubstitutionLimitValue: Int {
-        MatchFormat.clampedSubstitutionLimit(defaultSubstitutionLimit)
+        MatchFormat.clampedSubstitutionLimit(defaultSubstitutionLimit ?? MatchFormat.defaultSubstitutionLimit)
     }
 
     var quickActions: QuickActionConfiguration {

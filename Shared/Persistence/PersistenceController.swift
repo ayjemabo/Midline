@@ -28,6 +28,16 @@ final class PersistenceController {
     }
 
     func prepareRequiredRecords(context: ModelContext) throws {
+        let matchRecords = try context.fetch(FetchDescriptor<MatchRecord>())
+        for matchRecord in matchRecords {
+            matchRecord.normalizePersistedValues()
+        }
+
+        let eventRecords = try context.fetch(FetchDescriptor<MatchEventRecord>())
+        for eventRecord in eventRecords {
+            eventRecord.normalizePersistedValues()
+        }
+
         let settingsRecords = try context.fetch(FetchDescriptor<AppSettingsRecord>())
         if settingsRecords.isEmpty {
             context.insert(AppSettingsRecord())
