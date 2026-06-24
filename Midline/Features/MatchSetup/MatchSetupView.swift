@@ -109,6 +109,9 @@ struct MatchSetupView: View {
                 Section("Players") {
                     Toggle("Add player list", isOn: includePlayersBinding)
                     if includePlayers {
+                        Text("Current starters: \(starterCount(for: homePlayers))v\(starterCount(for: opponentPlayers)) • uneven sides allowed")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 16) {
                             rosterSection(
                                 title: setupTeamDisplayName,
@@ -318,9 +321,14 @@ struct MatchSetupView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label(title, systemImage: "person.3.fill")
-                    .font(.headline)
-                    .foregroundStyle(accent)
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(title, systemImage: "person.3.fill")
+                        .font(.headline)
+                        .foregroundStyle(accent)
+                    Text(rosterCountText(for: players.wrappedValue))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button {
                     players.wrappedValue.append(SetupPlayerDraft(teamSide: defaultTeamSide))
@@ -346,6 +354,17 @@ struct MatchSetupView: View {
         }
         .padding(14)
         .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func rosterCountText(for players: [SetupPlayerDraft]) -> String {
+        let namedPlayers = players.filter { MatchFormat.sanitizedNameText($0.name) != nil }
+        let starterCount = namedPlayers.filter(\.isStarter).count
+        let benchCount = namedPlayers.count - starterCount
+        return "\(starterCount) \(starterCount == 1 ? "starter" : "starters") • \(benchCount) bench"
+    }
+
+    private func starterCount(for players: [SetupPlayerDraft]) -> Int {
+        players.filter { MatchFormat.sanitizedNameText($0.name) != nil && $0.isStarter }.count
     }
 }
 
