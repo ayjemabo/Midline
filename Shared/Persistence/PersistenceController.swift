@@ -13,7 +13,7 @@ final class PersistenceController {
     private static let logger = Logger(subsystem: "com.albaraa.Midline", category: "Persistence")
 
     init(inMemory: Bool = false) {
-        let schema = Schema(versionedSchema: MidlineSchemaV5.self)
+        let schema = Schema(versionedSchema: MidlineSchemaV6.self)
         let primaryConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         var diagnostics = [String]()
 
@@ -98,7 +98,7 @@ final class PersistenceController {
     #if DEBUG
     static func recoverStoreForTesting(sourceURL: URL) -> ModelContainer? {
         var diagnostics = [String]()
-        let schema = Schema(versionedSchema: MidlineSchemaV5.self)
+        let schema = Schema(versionedSchema: MidlineSchemaV6.self)
         return recoverStore(schema: schema, sourceURL: sourceURL, diagnostics: &diagnostics)
     }
     #endif
@@ -165,6 +165,7 @@ private extension PersistenceController {
         let notes: String?
         let pitchX: Double?
         let pitchY: Double?
+        let elapsedSeconds: Int?
         let sourceDeviceRawValue: String?
     }
 
@@ -326,6 +327,7 @@ private extension PersistenceController {
                 id: recoveredEvent.id,
                 timestamp: recoveredEvent.timestamp,
                 matchMinute: recoveredEvent.matchMinute,
+                elapsedSeconds: recoveredEvent.elapsedSeconds,
                 period: MatchPeriod(rawValue: recoveredEvent.periodRawValue) ?? .firstHalf,
                 eventType: MatchEventType(rawValue: recoveredEvent.eventTypeRawValue) ?? .goal,
                 teamSide: TeamSide(rawValue: recoveredEvent.teamSideRawValue) ?? .home,
@@ -521,6 +523,8 @@ private final class SQLiteRecoveryReader {
                     notes: row.string("ZNOTES"),
                     pitchX: row.double("ZPITCHX"),
                     pitchY: row.double("ZPITCHY"),
+                    elapsedSeconds: columns.contains("ZELAPSEDSECONDS")
+                        ? row.int("ZELAPSEDSECONDS") : nil,
                     sourceDeviceRawValue: columns.contains("ZSOURCEDEVICERAWVALUE")
                         ? row.string("ZSOURCEDEVICERAWVALUE") : nil
                 )
@@ -686,13 +690,28 @@ enum MidlineMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
         [
             MidlineSchemaV1.self,
-            MidlineSchemaV5.self
+            MidlineSchemaV5.self,
+            MidlineSchemaV6.self
         ]
     }
 
     static var stages: [MigrationStage] {
         [
-            .lightweight(fromVersion: MidlineSchemaV1.self, toVersion: MidlineSchemaV5.self)
+            .lightweight(fromVersion: MidlineSchemaV1.self, toVersion: MidlineSchemaV5.self),
+            .lightweight(fromVersion: MidlineSchemaV5.self, toVersion: MidlineSchemaV6.self)
+        ]
+    }
+}
+
+enum MidlineSchemaV6: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(6, 0, 0) }
+
+    static var models: [any PersistentModel.Type] {
+        [
+            MatchRecord.self,
+            PlayerRecord.self,
+            MatchEventRecord.self,
+            AppSettingsRecord.self
         ]
     }
 }
@@ -707,6 +726,205 @@ enum MidlineSchemaV5: VersionedSchema {
             MatchEventRecord.self,
             AppSettingsRecord.self
         ]
+    }
+
+    @Model
+    final class MatchRecord {
+        @Attribute(.unique) var id: UUID
+        var title: String
+        var teamName: String
+        var opponentName: String
+        var date: Date
+        var durationMinutes: Int
+        var numberOfHalves: Int
+        var extraTimeEnabled: Bool?
+        var extraTimeHalfDurationMinutes: Int?
+        var shootoutStatusRawValue: String?
+        var homePenaltyScore: Int?
+        var awayPenaltyScore: Int?
+        var substitutionLimitModeRawValue: String?
+        var substitutionLimit: Int?
+        var isQuickMatch: Bool
+        var currentHalf: Int
+        var homeScore: Int
+        var awayScore: Int
+        var elapsedSeconds: Int
+        var isLive: Bool
+        var isFinished: Bool
+        var accentRawValue: String
+        var trackedEventTypeRawValues: [String]?
+        @Relationship(deleteRule: .cascade, inverse: \PlayerRecord.match) var players: [PlayerRecord] = []
+        @Relationship(deleteRule: .cascade, inverse: \MatchEventRecord.match) var events: [MatchEventRecord] = []
+
+        init(
+            id: UUID = UUID(),
+            title: String,
+            teamName: String,
+            opponentName: String,
+            date: Date = .now,
+            durationMinutes: Int = 90,
+            numberOfHalves: Int = 2,
+            extraTimeEnabled: Bool? = false,
+            extraTimeHalfDurationMinutes: Int? = MatchFormat.defaultExtraTimeHalfDurationMinutes,
+            shootoutStatusRawValue: String? = PenaltyShootoutStatus.notStarted.rawValue,
+            homePenaltyScore: Int? = 0,
+            awayPenaltyScore: Int? = 0,
+            substitutionLimitModeRawValue: String? = SubstitutionLimitMode.unlimited.rawValue,
+            substitutionLimit: Int? = MatchFormat.defaultSubstitutionLimit,
+            isQuickMatch: Bool = false,
+            currentHalf: Int = 1,
+            homeScore: Int = 0,
+            awayScore: Int = 0,
+            elapsedSeconds: Int = 0,
+            isLive: Bool = true,
+            isFinished: Bool = false,
+            accentRawValue: String = AppThemeAccent.stadiumGreen.rawValue,
+            trackedEventTypeRawValues: [String]? = MatchEventType.defaultQuickActions.map(\.rawValue)
+        ) {
+            self.id = id
+            self.title = title
+            self.teamName = teamName
+            self.opponentName = opponentName
+            self.date = date
+            self.durationMinutes = durationMinutes
+            self.numberOfHalves = numberOfHalves
+            self.extraTimeEnabled = extraTimeEnabled
+            self.extraTimeHalfDurationMinutes = extraTimeHalfDurationMinutes
+            self.shootoutStatusRawValue = shootoutStatusRawValue
+            self.homePenaltyScore = homePenaltyScore
+            self.awayPenaltyScore = awayPenaltyScore
+            self.substitutionLimitModeRawValue = substitutionLimitModeRawValue
+            self.substitutionLimit = substitutionLimit
+            self.isQuickMatch = isQuickMatch
+            self.currentHalf = currentHalf
+            self.homeScore = homeScore
+            self.awayScore = awayScore
+            self.elapsedSeconds = elapsedSeconds
+            self.isLive = isLive
+            self.isFinished = isFinished
+            self.accentRawValue = accentRawValue
+            self.trackedEventTypeRawValues = trackedEventTypeRawValues
+        }
+    }
+
+    @Model
+    final class PlayerRecord {
+        @Attribute(.unique) var id: UUID
+        var name: String
+        var jerseyNumber: Int?
+        var positionRawValue: String
+        var isFavorite: Bool
+        var isPinned: Bool
+        var isStarter: Bool
+        var teamSideRawValue: String
+        var match: MatchRecord?
+
+        init(
+            id: UUID = UUID(),
+            name: String,
+            jerseyNumber: Int? = nil,
+            positionRawValue: String = PlayerPosition.utility.rawValue,
+            isFavorite: Bool = false,
+            isPinned: Bool = false,
+            isStarter: Bool = true,
+            teamSideRawValue: String = TeamSide.home.rawValue,
+            match: MatchRecord? = nil
+        ) {
+            self.id = id
+            self.name = name
+            self.jerseyNumber = jerseyNumber
+            self.positionRawValue = positionRawValue
+            self.isFavorite = isFavorite
+            self.isPinned = isPinned
+            self.isStarter = isStarter
+            self.teamSideRawValue = teamSideRawValue
+            self.match = match
+        }
+    }
+
+    @Model
+    final class MatchEventRecord {
+        @Attribute(.unique) var id: UUID
+        var timestamp: Date
+        var matchMinute: Int
+        var periodRawValue: String
+        var eventTypeRawValue: String
+        var teamSideRawValue: String
+        var playerID: UUID?
+        var secondaryPlayerID: UUID?
+        var linkedGroupID: UUID?
+        var notes: String?
+        var pitchX: Double?
+        var pitchY: Double?
+        var sourceDeviceRawValue: String?
+        var match: MatchRecord?
+
+        init(
+            id: UUID = UUID(),
+            timestamp: Date = .now,
+            matchMinute: Int,
+            periodRawValue: String = MatchPeriod.firstHalf.rawValue,
+            eventTypeRawValue: String = MatchEventType.goal.rawValue,
+            teamSideRawValue: String = TeamSide.home.rawValue,
+            playerID: UUID? = nil,
+            secondaryPlayerID: UUID? = nil,
+            linkedGroupID: UUID? = nil,
+            notes: String? = nil,
+            pitchX: Double? = nil,
+            pitchY: Double? = nil,
+            sourceDeviceRawValue: String? = SourceDevice.iPhone.rawValue,
+            match: MatchRecord? = nil
+        ) {
+            self.id = id
+            self.timestamp = timestamp
+            self.matchMinute = matchMinute
+            self.periodRawValue = periodRawValue
+            self.eventTypeRawValue = eventTypeRawValue
+            self.teamSideRawValue = teamSideRawValue
+            self.playerID = playerID
+            self.secondaryPlayerID = secondaryPlayerID
+            self.linkedGroupID = linkedGroupID
+            self.notes = notes
+            self.pitchX = pitchX
+            self.pitchY = pitchY
+            self.sourceDeviceRawValue = sourceDeviceRawValue
+            self.match = match
+        }
+    }
+
+    @Model
+    final class AppSettingsRecord {
+        @Attribute(.unique) var id: UUID
+        var defaultDurationMinutes: Int
+        var defaultNumberOfHalves: Int
+        var defaultExtraTimeEnabled: Bool?
+        var defaultExtraTimeHalfDurationMinutes: Int?
+        var defaultSubstitutionLimitModeRawValue: String?
+        var defaultSubstitutionLimit: Int?
+        var themeAccentRawValue: String
+        var quickActionsData: Data
+
+        init(
+            id: UUID = UUID(),
+            defaultDurationMinutes: Int = 90,
+            defaultNumberOfHalves: Int = 2,
+            defaultExtraTimeEnabled: Bool? = false,
+            defaultExtraTimeHalfDurationMinutes: Int? = MatchFormat.defaultExtraTimeHalfDurationMinutes,
+            defaultSubstitutionLimitModeRawValue: String? = SubstitutionLimitMode.unlimited.rawValue,
+            defaultSubstitutionLimit: Int? = MatchFormat.defaultSubstitutionLimit,
+            themeAccentRawValue: String = AppThemeAccent.stadiumGreen.rawValue,
+            quickActionsData: Data = Data()
+        ) {
+            self.id = id
+            self.defaultDurationMinutes = defaultDurationMinutes
+            self.defaultNumberOfHalves = defaultNumberOfHalves
+            self.defaultExtraTimeEnabled = defaultExtraTimeEnabled
+            self.defaultExtraTimeHalfDurationMinutes = defaultExtraTimeHalfDurationMinutes
+            self.defaultSubstitutionLimitModeRawValue = defaultSubstitutionLimitModeRawValue
+            self.defaultSubstitutionLimit = defaultSubstitutionLimit
+            self.themeAccentRawValue = themeAccentRawValue
+            self.quickActionsData = quickActionsData
+        }
     }
 }
 

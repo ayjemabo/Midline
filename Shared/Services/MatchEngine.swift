@@ -220,6 +220,7 @@ final class MatchEngine {
         let event = MatchEventRecord(
             timestamp: timestamp,
             matchMinute: matchMinute(for: match),
+            elapsedSeconds: match.elapsedClockSeconds,
             period: period(for: eventType, in: match),
             eventType: eventType,
             teamSide: teamSide,
@@ -257,6 +258,7 @@ final class MatchEngine {
         let assistEvent = MatchEventRecord(
             timestamp: timestamp,
             matchMinute: matchMinute(for: match),
+            elapsedSeconds: match.elapsedClockSeconds,
             period: currentPeriod(for: match.currentPeriodNumber),
             eventType: .assist,
             teamSide: teamSide,

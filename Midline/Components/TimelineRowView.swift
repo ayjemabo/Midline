@@ -6,10 +6,10 @@ struct TimelineRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text("\(event.matchMinuteValue)'")
+            Text(event.matchClockText)
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 42, alignment: .leading)
+                .frame(width: 52, alignment: .leading)
 
             Circle()
                 .fill(event.validEventType?.tint ?? .secondary)

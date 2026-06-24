@@ -2289,6 +2289,42 @@ final class MatchEngineTests: XCTestCase {
         ])
     }
 
+    func testLoggedEventCapturesElapsedClockForTimelineDisplay() throws {
+        let context = try makeContext()
+        let match = makeMatch()
+        match.elapsedSeconds = 754
+        context.insert(match)
+
+        let engine = MatchEngine()
+        try engine.log(
+            eventType: .shotOnTarget,
+            in: match,
+            context: context,
+            teamSide: .home,
+            timestamp: Date(timeIntervalSince1970: 200)
+        )
+
+        let event = try XCTUnwrap(match.events.first)
+        XCTAssertEqual(event.matchMinuteValue, 13)
+        XCTAssertEqual(event.elapsedSeconds, 754)
+        XCTAssertEqual(event.matchClockText, "12:34")
+        XCTAssertEqual(match.summaryTimelineEvents(for: .home).first?.matchClockText, "12:34")
+    }
+
+    func testLegacyEventClockTextFallsBackToMatchMinute() {
+        let match = makeMatch()
+        let event = MatchEventRecord(
+            timestamp: Date(timeIntervalSince1970: 150),
+            matchMinute: 12,
+            period: .firstHalf,
+            eventType: .shotOnTarget,
+            match: match
+        )
+
+        XCTAssertNil(event.elapsedSeconds)
+        XCTAssertEqual(event.matchClockText, "12:00")
+    }
+
     func testTimelineSortsLinkedGoalBeforeAssist() {
         let match = makeMatch()
         let timestamp = Date(timeIntervalSince1970: 160)

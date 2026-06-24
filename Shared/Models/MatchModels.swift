@@ -118,6 +118,13 @@ nonisolated enum MatchFormat {
         return String(format: "%02d:%02d", minutes, seconds)
     }
 
+    static func eventClockText(forElapsedSeconds elapsedSeconds: Int) -> String {
+        let safeElapsedSeconds = clampedElapsedSeconds(elapsedSeconds)
+        let minutes = safeElapsedSeconds / 60
+        let seconds = safeElapsedSeconds % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+
     static func title(forPeriod period: Int) -> String {
         switch period {
         case ...1:
@@ -714,6 +721,7 @@ final class MatchEventRecord {
     @Attribute(.unique) var id: UUID
     var timestamp: Date
     var matchMinute: Int
+    var elapsedSeconds: Int?
     var periodRawValue: String
     var eventTypeRawValue: String
     var teamSideRawValue: String
@@ -730,6 +738,7 @@ final class MatchEventRecord {
         id: UUID = UUID(),
         timestamp: Date = .now,
         matchMinute: Int,
+        elapsedSeconds: Int? = nil,
         period: MatchPeriod,
         eventType: MatchEventType,
         teamSide: TeamSide = .home,
@@ -745,6 +754,7 @@ final class MatchEventRecord {
         self.id = id
         self.timestamp = timestamp
         self.matchMinute = MatchFormat.clampedMatchMinute(matchMinute)
+        self.elapsedSeconds = elapsedSeconds.map(MatchFormat.clampedElapsedSeconds)
         self.periodRawValue = period.rawValue
         self.eventTypeRawValue = eventType.rawValue
         self.teamSideRawValue = teamSide.rawValue
@@ -806,6 +816,13 @@ final class MatchEventRecord {
         MatchFormat.clampedMatchMinute(matchMinute)
     }
 
+    var matchClockText: String {
+        if let elapsedSeconds {
+            return MatchFormat.eventClockText(forElapsedSeconds: elapsedSeconds)
+        }
+        return MatchFormat.eventClockText(forElapsedSeconds: matchMinuteValue * 60)
+    }
+
     var notesText: String? {
         MatchFormat.sanitizedDisplayText(notes)
     }
@@ -815,6 +832,7 @@ final class MatchEventRecord {
     }
 
     func normalizePersistedValues() {
+        elapsedSeconds = elapsedSeconds.map(MatchFormat.clampedElapsedSeconds)
         sourceDeviceRawValue = sourceDevice.rawValue
     }
 }
