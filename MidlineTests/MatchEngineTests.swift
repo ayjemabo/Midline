@@ -89,6 +89,35 @@ final class MatchEngineTests: XCTestCase {
         XCTAssertTrue(match.events.isEmpty)
     }
 
+    func testPlayerFirstGoalLogsSelectedPlayerWithoutAssist() throws {
+        let context = try makeContext()
+        let match = makeMatch()
+        let scorer = PlayerRecord(name: "Scorer", teamSide: .home, match: match)
+        let teammate = PlayerRecord(name: "Teammate", teamSide: .home, match: match)
+        match.players.append(contentsOf: [scorer, teammate])
+        context.insert(match)
+        context.insert(scorer)
+        context.insert(teammate)
+
+        let engine = MatchEngine()
+        try engine.log(
+            eventType: .goal,
+            in: match,
+            context: context,
+            teamSide: .home,
+            playerID: scorer.id,
+            timestamp: Date(timeIntervalSince1970: 101.5)
+        )
+
+        XCTAssertEqual(match.homeScore, 1)
+        XCTAssertEqual(match.awayScore, 0)
+        XCTAssertEqual(match.events.map(\.eventType), [.goal])
+        let event = try XCTUnwrap(match.events.first)
+        XCTAssertEqual(event.playerID, scorer.id)
+        XCTAssertNil(event.secondaryPlayerID)
+        XCTAssertNil(event.linkedGroupID)
+    }
+
     func testHomeOwnGoalAwardsOpponentScoreWithoutAssist() throws {
         let context = try makeContext()
         let match = makeMatch()
@@ -160,6 +189,34 @@ final class MatchEngineTests: XCTestCase {
         XCTAssertEqual(match.events.count, 1)
         XCTAssertEqual(match.events.map(\.eventType), [.shotOnTarget])
         XCTAssertEqual(match.events.sortedForTimeline().map(\.eventType), [.shotOnTarget])
+    }
+
+    func testPlayerFirstShotOnTargetCreditsSelectedPlayerOnce() throws {
+        let context = try makeContext()
+        let match = makeMatch()
+        let shooter = PlayerRecord(name: "Shooter", teamSide: .home, match: match)
+        match.players.append(shooter)
+        context.insert(match)
+        context.insert(shooter)
+
+        let engine = MatchEngine()
+        try engine.log(
+            eventType: .shotOnTarget,
+            in: match,
+            context: context,
+            teamSide: .home,
+            playerID: shooter.id,
+            timestamp: Date(timeIntervalSince1970: 102.255)
+        )
+
+        XCTAssertEqual(match.events.count, 1)
+        let event = try XCTUnwrap(match.events.first)
+        XCTAssertEqual(event.eventType, .shotOnTarget)
+        XCTAssertEqual(event.playerID, shooter.id)
+
+        let summary = MatchAnalyticsService().buildSummary(for: match)
+        XCTAssertEqual(summary.topAttackingContributor?.playerID, shooter.id)
+        XCTAssertEqual(summary.topAttackingContributor?.stats[.shotOnTarget], 1)
     }
 
     func testFirstYellowCardDoesNotCreateRedCard() throws {

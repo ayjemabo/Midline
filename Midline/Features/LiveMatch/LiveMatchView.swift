@@ -12,10 +12,13 @@ struct LiveMatchView: View {
     @State private var timer: Timer?
     @State private var pendingDraft: EventDraft?
     @State private var selectedTeamSide: TeamSide = .home
+    @State private var selectedHomePlayerID: UUID?
+    @State private var selectedOpponentPlayerID: UUID?
     @State private var showingMatchEndCard = false
     @State private var pendingConfirmation: LiveMatchConfirmation?
     @State private var pendingEventDeletion: MatchEventRecord?
     @State private var saveErrorMessage: String?
+    @State private var playerSelectionMessage: String?
     @State private var headerMinY: CGFloat = 0
     @State private var lastClockSnapshotElapsedSeconds = 0
 
@@ -137,10 +140,28 @@ struct LiveMatchView: View {
         } message: {
             Text(saveErrorMessage ?? "Try again.")
         }
+        .alert("Select Player", isPresented: Binding(
+            get: { playerSelectionMessage != nil },
+            set: { if !$0 { playerSelectionMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(playerSelectionMessage ?? "Choose a player before logging this event.")
+        }
         .onAppear {
             engine.restore(match: match)
+            normalizeSelectedPlayers(preferFirstActive: true)
             saveMatchState()
             startClock()
+        }
+        .onChange(of: selectedTeamSide) { _, _ in
+            normalizeSelectedPlayers(preferFirstActive: true)
+        }
+        .onChange(of: playerSelectionFingerprint) { _, _ in
+            normalizeSelectedPlayers(preferFirstActive: true)
+        }
+        .onChange(of: match.events.count) { _, _ in
+            normalizeSelectedPlayers(preferFirstActive: true)
         }
         .onDisappear {
             timer?.invalidate()
@@ -195,6 +216,7 @@ struct LiveMatchView: View {
             } else if visibleActions.isEmpty {
                 emptyStateLabel("No quick actions enabled for this match.")
             } else {
+                playerFirstSelector
                 if let substitutionText {
                     Text(substitutionText)
                         .font(.footnote.weight(.semibold))
@@ -202,7 +224,7 @@ struct LiveMatchView: View {
                 }
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(visibleActions, id: \.self) { action in
-                        QuickEventButton(eventType: action) {
+                        QuickEventButton(eventType: action, detailAction: { openDetail(for: action) }) {
                             log(action)
                         }
                         .disabled(isQuickActionDisabled(action))
@@ -232,6 +254,61 @@ struct LiveMatchView: View {
                 }
             }
         }
+    }
+
+    private var playerFirstSelector: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "person.crop.circle.fill.badge.checkmark")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(match.accent.color)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Events Log To")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    Text(selectedPlayerTitle)
+                        .font(.headline.weight(.bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                }
+
+                Spacer(minLength: 8)
+
+                Text(match.displayName(for: selectedTeamSide))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+
+            if tracksPlayers, !selectablePlayersForSelectedTeam.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(selectablePlayersForSelectedTeam) { player in
+                            PlayerSelectionChip(
+                                player: player,
+                                isSelected: selectedPlayer?.id == player.id,
+                                accentColor: match.accent.color
+                            ) {
+                                setSelectedPlayerID(player.id, for: selectedTeamSide)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            } else {
+                Text(playerSelectionHelpText)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .background(match.accent.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(match.accent.color.opacity(0.28), lineWidth: 1)
+        )
     }
 
     private var controls: some View {
@@ -352,17 +429,71 @@ struct LiveMatchView: View {
         quickActionConfiguration.playerTrackingMode
     }
 
+    private var tracksPlayers: Bool {
+        playerTrackingMode != .off
+    }
+
+    private var selectedPlayer: PlayerRecord? {
+        guard let selectedPlayerID = selectedPlayerID(for: selectedTeamSide) else { return nil }
+        return selectablePlayersForSelectedTeam.first { $0.id == selectedPlayerID }
+    }
+
+    private var selectedPlayerTitle: String {
+        guard tracksPlayers else { return "Team-level logging" }
+        if let selectedPlayer {
+            return playerLabel(for: selectedPlayer)
+        }
+        if playerTrackingMode == .required {
+            return "Roster required"
+        }
+        if hasPlayersForSelectedTeam {
+            return "Choose a player"
+        }
+        return "Team-level logging"
+    }
+
+    private var playerSelectionHelpText: String {
+        if !tracksPlayers {
+            return "Player tracking is off for quick actions."
+        }
+        if hasPlayersForSelectedTeam {
+            return "Choose a player before logging an event."
+        }
+        if playerTrackingMode == .required {
+            return "Player tracking is required, so add a player before logging events for this side."
+        }
+        return "No players are rostered for this side, so quick events log to the team."
+    }
+
+    private var selectablePlayersForSelectedTeam: [PlayerRecord] {
+        selectablePlayers(for: selectedTeamSide)
+    }
+
+    private var playerSelectionFingerprint: String {
+        match.players
+            .map { "\($0.id.uuidString):\($0.validTeamSide?.rawValue ?? "invalid"):\($0.isStarter)" }
+            .sorted()
+            .joined(separator: "|")
+    }
+
     private func log(_ eventType: MatchEventType) {
         guard !match.isFinished else { return }
-        if shouldShowDetailSheet {
-            pendingDraft = EventDraft(type: eventType, teamSide: selectedTeamSide)
-        } else {
-            do {
-                try engine.log(eventType: eventType, in: match, context: context, teamSide: selectedTeamSide)
-                MatchSyncService.shared.broadcastMatchState(match)
-            } catch {
-                showSaveError(error)
-            }
+        if eventType == .substitution {
+            openDetail(for: eventType)
+            return
+        }
+
+        if shouldBlockQuickLogForMissingPlayer {
+            playerSelectionMessage = "Choose a \(match.displayName(for: selectedTeamSide)) player before logging \(eventType.title)."
+            return
+        }
+        let playerID = playerIDForQuickLog()
+
+        do {
+            try engine.log(eventType: eventType, in: match, context: context, teamSide: selectedTeamSide, playerID: playerID)
+            MatchSyncService.shared.broadcastMatchState(match)
+        } catch {
+            showSaveError(error)
         }
     }
 
@@ -382,13 +513,91 @@ struct LiveMatchView: View {
         || (action == .substitution && !match.canUseSubstitution(for: selectedTeamSide))
     }
 
-    private var shouldShowDetailSheet: Bool {
-        quickActionConfiguration.smartDetailEnabled
-        || (playerTrackingMode == .required && hasPlayersForSelectedTeam)
+    private var hasPlayersForSelectedTeam: Bool {
+        hasPlayers(for: selectedTeamSide)
     }
 
-    private var hasPlayersForSelectedTeam: Bool {
-        match.players.contains { $0.validTeamSide == selectedTeamSide }
+    private var shouldBlockQuickLogForMissingPlayer: Bool {
+        guard tracksPlayers, selectedPlayer == nil else { return false }
+        return playerTrackingMode == .required || hasPlayers(for: selectedTeamSide)
+    }
+
+    private func openDetail(for eventType: MatchEventType) {
+        guard !match.isFinished else { return }
+        pendingDraft = draft(for: eventType)
+    }
+
+    private func draft(for eventType: MatchEventType) -> EventDraft {
+        var draft = EventDraft(type: eventType, teamSide: selectedTeamSide)
+        if tracksPlayers, let selectedPlayerID = selectedPlayerID(for: selectedTeamSide) {
+            draft.primaryPlayerID = selectedPlayerID
+        }
+        return draft
+    }
+
+    private func playerIDForQuickLog() -> UUID? {
+        guard tracksPlayers, hasPlayers(for: selectedTeamSide) else {
+            return nil
+        }
+        return selectedPlayer?.id
+    }
+
+    private func hasPlayers(for teamSide: TeamSide) -> Bool {
+        match.players.contains { $0.validTeamSide == teamSide }
+    }
+
+    private func selectablePlayers(for teamSide: TeamSide) -> [PlayerRecord] {
+        let sidePlayers = match.players
+            .filter { $0.validTeamSide == teamSide }
+            .sortedForPlayerSelection()
+        let activePlayerIDs = match.liveActivePlayerIDs(for: teamSide)
+        let activePlayers = sidePlayers.filter { activePlayerIDs.contains($0.id) }
+        return activePlayers.isEmpty ? sidePlayers : activePlayers
+    }
+
+    private func selectedPlayerID(for teamSide: TeamSide) -> UUID? {
+        switch teamSide {
+        case .home:
+            selectedHomePlayerID
+        case .opponent:
+            selectedOpponentPlayerID
+        }
+    }
+
+    private func setSelectedPlayerID(_ playerID: UUID?, for teamSide: TeamSide) {
+        switch teamSide {
+        case .home:
+            selectedHomePlayerID = playerID
+        case .opponent:
+            selectedOpponentPlayerID = playerID
+        }
+    }
+
+    private func normalizeSelectedPlayers(preferFirstActive: Bool) {
+        for teamSide in TeamSide.allCases {
+            let selectablePlayers = selectablePlayers(for: teamSide)
+            let selectedPlayerID = selectedPlayerID(for: teamSide)
+            if let selectedPlayerID, selectablePlayers.contains(where: { $0.id == selectedPlayerID }) {
+                continue
+            }
+            setSelectedPlayerID(preferFirstActive ? selectablePlayers.first?.id : nil, for: teamSide)
+        }
+    }
+
+    private func rememberSelection(from draft: EventDraft) {
+        if draft.type == .substitution, let playerOnID = draft.secondaryPlayerID {
+            setSelectedPlayerID(playerOnID, for: draft.teamSide)
+        } else if let primaryPlayerID = draft.primaryPlayerID {
+            setSelectedPlayerID(primaryPlayerID, for: draft.teamSide)
+        }
+        normalizeSelectedPlayers(preferFirstActive: true)
+    }
+
+    private func playerLabel(for player: PlayerRecord) -> String {
+        if let jerseyNumber = player.jerseyNumberValue {
+            return "#\(jerseyNumber) \(player.displayName)"
+        }
+        return player.displayName
     }
 
     private func startClock() {
@@ -444,6 +653,7 @@ struct LiveMatchView: View {
     private func save(_ draft: EventDraft) -> Bool {
         do {
             try engine.applyDraft(draft, to: match, context: context)
+            rememberSelection(from: draft)
             MatchSyncService.shared.broadcastMatchState(match)
             return true
         } catch {
@@ -615,6 +825,48 @@ private struct SwipeDeleteTimelineRow: View {
     }
 }
 
+private struct PlayerSelectionChip: View {
+    let player: PlayerRecord
+    let isSelected: Bool
+    let accentColor: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.subheadline.weight(.bold))
+                }
+                Text(label)
+                    .font(.subheadline.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(isSelected ? .white : accentColor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                isSelected ? accentColor : Color(uiColor: .systemBackground),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(accentColor.opacity(isSelected ? 0 : 0.28), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isSelected ? "\(label), selected" : label)
+    }
+
+    private var label: String {
+        if let jerseyNumber = player.jerseyNumberValue {
+            return "#\(jerseyNumber) \(player.displayName)"
+        }
+        return player.displayName
+    }
+}
+
 private struct EventDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -741,11 +993,20 @@ private struct EventDetailSheet: View {
     }
 
     private var requiresPrimaryPlayer: Bool {
-        playerTrackingMode == .required && !primaryPlayers.isEmpty && canRequirePlayerSelection
+        (playerTrackingMode == .required || requiresCompleteSubstitution)
+        && !primaryPlayers.isEmpty
+        && canRequirePlayerSelection
     }
 
     private var requiresSecondaryPlayer: Bool {
-        playerTrackingMode == .required && showsSecondaryPicker && !secondaryPlayers.isEmpty && canRequirePlayerSelection
+        (playerTrackingMode == .required || requiresCompleteSubstitution)
+        && showsSecondaryPicker
+        && !secondaryPlayers.isEmpty
+        && canRequirePlayerSelection
+    }
+
+    private var requiresCompleteSubstitution: Bool {
+        tracksPlayers && draft.type == .substitution
     }
 
     private var canRequirePlayerSelection: Bool {
