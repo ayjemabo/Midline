@@ -345,15 +345,37 @@ struct MatchSetupView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
             } else {
-                ForEach(players) { $player in
-                    PlayerDraftRow(player: $player) {
-                        players.wrappedValue.removeAll { $0.id == player.id }
+                ForEach(players.wrappedValue) { player in
+                    if let playerBinding = playerBinding(for: player.id, in: players) {
+                        PlayerDraftRow(player: playerBinding) {
+                            removePlayer(withID: player.id, from: players)
+                        }
                     }
                 }
             }
         }
         .padding(14)
         .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func playerBinding(
+        for id: UUID,
+        in players: Binding<[SetupPlayerDraft]>
+    ) -> Binding<SetupPlayerDraft>? {
+        guard let fallbackPlayer = players.wrappedValue.first(where: { $0.id == id }) else { return nil }
+        return Binding(
+            get: {
+                players.wrappedValue.first(where: { $0.id == id }) ?? fallbackPlayer
+            },
+            set: { updatedPlayer in
+                guard let index = players.wrappedValue.firstIndex(where: { $0.id == id }) else { return }
+                players.wrappedValue[index] = updatedPlayer
+            }
+        )
+    }
+
+    private func removePlayer(withID id: UUID, from players: Binding<[SetupPlayerDraft]>) {
+        players.wrappedValue.removeAll { $0.id == id }
     }
 
     private func rosterCountText(for players: [SetupPlayerDraft]) -> String {
@@ -396,6 +418,12 @@ private struct SetupPlayerDraft: Identifiable, Hashable {
 private struct PlayerDraftRow: View {
     @Binding var player: SetupPlayerDraft
     let onDelete: () -> Void
+    @FocusState private var focusedField: FocusedField?
+
+    private enum FocusedField: Hashable {
+        case name
+        case jersey
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -403,17 +431,22 @@ private struct PlayerDraftRow: View {
                 TextField("Player name", text: $player.name)
                     .textInputAutocapitalization(.words)
                     .autocorrectionDisabled()
+                    .focused($focusedField, equals: .name)
 
                 TextField("#", text: $player.jerseyNumberText)
                     .keyboardType(.numberPad)
                     .multilineTextAlignment(.center)
                     .frame(width: 48)
+                    .focused($focusedField, equals: .jersey)
                     .onChange(of: player.jerseyNumberText) { _, newValue in
                         player.jerseyNumberText = sanitizedJersey(from: newValue)
                     }
 
                 Button(role: .destructive) {
-                    onDelete()
+                    focusedField = nil
+                    DispatchQueue.main.async {
+                        onDelete()
+                    }
                 } label: {
                     Image(systemName: "trash")
                 }
